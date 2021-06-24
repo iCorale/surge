@@ -20,10 +20,12 @@ function getUrlParams(url) {
 }
 
 function getUserInfo(url) {
-    return new Promise(resolve => $httpClient.get(url, (err, resp) => {
-        if (err) $done();
-        resolve(resp.headers[Object.keys(resp.headers).find((key) => key.toLowerCase() === "subscription-userinfo")]);
-    }));
+    return new Promise((resolve) => setTimeout(() => {
+        $httpClient.get(url, (err, resp) => {
+                if (err) $done();
+                resolve(resp.headers[Object.keys(resp.headers).find((key) => key.toLowerCase() === "subscription-userinfo")]);
+            })
+    }, 500));
 }
 
 function getDataUsage(info) {

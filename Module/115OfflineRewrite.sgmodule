@@ -1,0 +1,7 @@
+#!name= 115
+#!desc= 115离线重定向
+
+[URL Rewrite]
+# https://q.115.com/mapp/?c=feedback&m=index
+^https?:\/\/q\.115\.com\/mapp\/\?c=feedback.*$ http://115.com/lx?taskdg=1 header
+
