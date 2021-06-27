@@ -3,7 +3,7 @@
 
 [Script]
 # 115离线增加清空按钮
-http-response ^https?:\/\/115\.com\/lx.*$ script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/115Offline.js, requires-body=true
+http-response ^https?:\/\/115\.com\/lx.*$ script-path=https://cdn.jsdelivr.net/gh/iCorale/surge@main/Script/115Offline.js, requires-body=true
 
 [MITM]
 hostname = %APPEND% *.115.com

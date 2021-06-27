@@ -1,9 +1,6 @@
 let body = $response.body;
 let url = $request.url;
 
-console.log('url=' + url)
-console.log('body=' + body)
-
 body = body.replace("UDown", 'XXXXXXXXX'); // 使重定向判断条件失效
 let clearJS = `<script type="text/javascript">
 $(function(){
