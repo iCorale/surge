@@ -1,0 +1,17 @@
+#!name=知乎防跳转
+#!desc=modified from @elecV2
+
+[URL Rewrite]
+^https:\/\/oia\.zhihu\.com\/articles\/([0-9]+)\?.* https://zhuanlan.zhihu.com/p/$1 307
+^https:\/\/oia\.zhihu\.com\/answers\/([0-9]+)\?.* https://www.zhihu.com/answer/$1 307
+^https?:\/\/link\.zhihu\.com/\?target=(https?)%3A//(.*) $1://$2 307
+
+[Header Rewrite]
+^https:\/\/www\.zhihu\.com\/ header-replace User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36"
+
+[Script]
+zhihu = type=http-response,pattern=^https:\/\/www\.zhihu\.com\/(question|topic),requires-body=1,max-size=0,script-path=https://cdn.jsdelivr.net/gh/iCorale/surge@main/Script/ZhihuRewrite.js,script-update-interval=0
+
+
+[MITM]
+hostname = %APPEND% oia.zhihu.com, link.zhihu.com, www.zhihu.com
