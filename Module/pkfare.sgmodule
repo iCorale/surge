@@ -1,0 +1,11 @@
+#!name= PKFARE分流Module
+#!desc= PKFARE分流Module
+
+[Rule]
+DOMAIN-KEYWORD, pkfare, DIRECT
+DOMAIN-KEYWORD, pkfare-inc, DIRECT
+
+DOMAIN-WILDCARD, *.proxy.airasia.com, DIRECT
+DOMAIN, fytestr4xapi.navitaire.com, DIRECT
+DOMAIN, fyprodr4xapi.navitaire.com, DIRECT
+
