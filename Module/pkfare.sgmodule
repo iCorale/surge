@@ -7,6 +7,8 @@ DOMAIN-KEYWORD, pkfare, DIRECT
 DOMAIN-KEYWORD, pkfare-inc, DIRECT
 # AIRASIA
 DOMAIN-WILDCARD, *.proxy.airasia.com, DIRECT
+DOMAIN-WILDCARD, *.dev.airasia.com, DIRECT
+DOMAIN-WILDCARD, *.swagger.airasia.com, DIRECT
 # FY
 DOMAIN, fytestr4xapi.navitaire.com, DIRECT
 DOMAIN, fyprodr4xapi.navitaire.com, DIRECT
