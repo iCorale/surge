@@ -1,4 +1,5 @@
 #!name=oixCloud DNS
 #!desc=oixCloud DNS
 
+[Host]
 *.cloud-nodes.com = server:124.221.68.73:1053
