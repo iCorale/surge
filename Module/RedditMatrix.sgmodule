@@ -1,8 +1,8 @@
 #!name=Reddit Matrix
-#!desc=让 Reddit Matrix 读取公开版块。只替换来自 icorale.github.io 和本机开发地址的列表 JSON。
+#!desc=让 Reddit Matrix 读取公开版块和版块内搜索。只替换来自 icorale.github.io 和本机开发地址的列表 JSON。
 
 [Script]
-reddit-matrix = type=http-request,pattern=^https://www\.reddit\.com/r/[^/]+/(best|hot|new|top|rising)\.json,requires-body=0,timeout=60,script-path=https://cdn.jsdelivr.net/gh/iCorale/surge@main/Script/RedditMatrix.js,script-update-interval=0
+reddit-matrix = type=http-request,pattern=^https://www\.reddit\.com/r/[^/]+/(best|hot|new|top|rising|search)\.json,requires-body=0,timeout=60,script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/RedditMatrix.js,script-update-interval=0
 
 [MITM]
 hostname = %APPEND% www.reddit.com

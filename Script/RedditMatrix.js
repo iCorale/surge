@@ -211,6 +211,108 @@ function parsePosts(html) {
   return children
 }
 
+function trackerSlice(html, thingIndex) {
+  const start = html.lastIndexOf('<search-telemetry-tracker', thingIndex)
+  if (start < 0) return ''
+  const open = '<search-telemetry-tracker'
+  const close = '</search-telemetry-tracker>'
+  let depth = 0
+  let i = start
+  while (i < html.length) {
+    const nextOpen = html.indexOf(open, i)
+    const nextClose = html.indexOf(close, i)
+    if (nextClose < 0) break
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth++
+      i = nextOpen + open.length
+      continue
+    }
+    depth--
+    i = nextClose + close.length
+    if (depth === 0) return html.slice(start, i)
+  }
+  return ''
+}
+
+function parseSearchPosts(html) {
+  if (!html || html.indexOf('Prove your humanity') !== -1) return null
+  if (html.indexOf('data-thingid="t3_') === -1) return []
+  const children = []
+  const seen = new Set()
+  const re = /data-thingid="(t3_[a-z0-9]+)"/gi
+  let match
+  while ((match = re.exec(html))) {
+    const name = match[1]
+    if (seen.has(name)) continue
+    const slice = decodeEntities(trackerSlice(html, match.index))
+    if (!slice) continue
+    const titleMatch = slice.match(/"title"\s*:\s*"((?:\\.|[^"\\])*)"/)
+    const title = titleMatch
+      ? titleMatch[1]
+          .replace(/\\"/g, '"')
+          .replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      : ''
+    const nsfw = /"nsfw"\s*:\s*true/.test(slice.slice(0, 2500))
+    const slug = redgifsSlug(slice)
+    const images = collectImages(slice)
+    if (slug) {
+      seen.add(name)
+      const poster = coverUrl(slice) || (images[0] ? images[0].url : '')
+      const data = {
+        name: name,
+        title: title,
+        url: 'https://www.redgifs.com/watch/' + slug,
+        is_self: false,
+        over_18: nsfw
+      }
+      if (poster) data.preview = { images: [{ source: { url: poster } }] }
+      children.push({ data: data })
+      continue
+    }
+    const direct = images[0] ? images[0].url : ''
+    if (!direct) continue
+    seen.add(name)
+    if (images.length > 1) {
+      const media_metadata = {}
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i]
+        media_metadata[image.id] = {
+          status: 'valid',
+          e: 'Image',
+          m: mimeFor(image.ext),
+          s: { u: image.url },
+          p: [{ x: 1080, u: image.url }]
+        }
+      }
+      const items = []
+      for (let i = 0; i < images.length; i++) items.push({ media_id: images[i].id })
+      children.push({
+        data: {
+          name: name,
+          title: title,
+          url: direct,
+          is_self: false,
+          over_18: nsfw,
+          is_gallery: true,
+          gallery_data: { items: items },
+          media_metadata: media_metadata
+        }
+      })
+      continue
+    }
+    children.push({
+      data: {
+        name: name,
+        title: title,
+        url: direct,
+        is_self: false,
+        over_18: nsfw
+      }
+    })
+  }
+  return children
+}
+
 const PARTIAL = 'text/vnd.reddit.partial+html, text/html'
 const PAGE_TARGET = 50
 const MAX_PAGES = 4
@@ -250,19 +352,86 @@ function fromMatrix() {
   return false
 }
 
+function queryParam(query, name) {
+  if (!query) return ''
+  const match = new RegExp('(?:^|&)' + name + '=([^&]*)').exec(query)
+  if (!match) return ''
+  try {
+    return decodeURIComponent(match[1].replace(/\+/g, ' '))
+  } catch (err) {
+    return ''
+  }
+}
+
 function feedUrlFromAppUrl(appUrl) {
   const match = /^https?:\/\/[^/]+(\/[^?#]*)(?:\?([^#]*))?/i.exec(appUrl)
   if (!match) return null
   const pathMatch = /\/r\/([^/]+)\/([^/]+)\.json$/.exec(match[1])
-  if (!pathMatch || pathMatch[2] === 'search') return null
-  let after = ''
-  const query = match[2] ? /(^|&)after=([^&]*)/.exec(match[2]) : null
-  if (query) after = decodeURIComponent(query[2].replace(/\+/g, ' '))
-  return {
+  if (!pathMatch) return null
+  const kind = pathMatch[2]
+  const target = {
     subreddit: decodeURIComponent(pathMatch[1]),
-    kind: pathMatch[2],
-    after
+    kind: kind,
+    after: queryParam(match[2], 'after'),
+    query: queryParam(match[2], 'q'),
+    sort: queryParam(match[2], 'sort')
   }
+  if (kind === 'search' && !target.query) return null
+  return target
+}
+
+function searchSort(sort) {
+  if (sort === 'best') return 'relevance'
+  if (sort === 'rising') return 'hot'
+  if (
+    sort === 'relevance' ||
+    sort === 'hot' ||
+    sort === 'new' ||
+    sort === 'top' ||
+    sort === 'comments'
+  ) {
+    return sort
+  }
+  return 'relevance'
+}
+
+function searchPageUrl(target, cursor) {
+  let url =
+    'https://www.reddit.com/svc/shreddit/r/' +
+    encodeURIComponent(target.subreddit) +
+    '/search/?q=' +
+    encodeURIComponent(target.query) +
+    '&type=posts&sort=' +
+    encodeURIComponent(searchSort(target.sort))
+  if (cursor) url += '&cursor=' + encodeURIComponent(cursor)
+  return url
+}
+
+function nextSearchCursor(html, current) {
+  const text = html.replace(/&amp;/g, '&')
+  const re = /[?&]cursor=([^"'&\s]+)/g
+  let match
+  while ((match = re.exec(text))) {
+    let value = match[1]
+    try {
+      value = decodeURIComponent(value)
+    } catch (err) {
+      continue
+    }
+    if (value && value !== current) return value
+  }
+  return ''
+}
+
+function hash32(text, seed) {
+  let hash = seed
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash, 33) ^ text.charCodeAt(i)
+  return hash >>> 0
+}
+
+function cursorStoreKey(target, after) {
+  const raw = target.subreddit + '\n' + target.query + '\n' + searchSort(target.sort) + '\n' + after
+  return 'rms.' + hash32(raw, 5381).toString(16) + hash32(raw, 2166136261).toString(16)
 }
 
 function feedUrlFor(target, after) {
@@ -288,6 +457,41 @@ function httpGet(url, headers) {
       })
     })
   })
+}
+
+function fetchFailed(res) {
+  if (!res || res.error) return true
+  if (typeof res.status === 'number' && (res.status < 200 || res.status >= 300)) return true
+  return !res.text
+}
+
+async function searchBatch(target, after) {
+  let cursor = ''
+  if (after) {
+    cursor = $persistentStore.read(cursorStoreKey(target, after)) || ''
+    if (!cursor) return []
+  }
+  const fetched = await httpGet(searchPageUrl(target, cursor), {
+    Accept: PARTIAL,
+    'User-Agent': userAgent()
+  })
+  if (fetchFailed(fetched)) return null
+  const posts = parseSearchPosts(fetched.text)
+  if (!posts) return null
+  const next = nextSearchCursor(fetched.text, cursor)
+  const last = posts.length && posts[posts.length - 1].data ? posts[posts.length - 1].data.name : ''
+  if (next && last) $persistentStore.write(next, cursorStoreKey(target, last))
+  return posts
+}
+
+async function postsFrom(target, after) {
+  if (target.kind === 'search') return searchBatch(target, after)
+  const fetched = await httpGet(feedUrlFor(target, after), {
+    Accept: PARTIAL,
+    'User-Agent': userAgent()
+  })
+  if (fetchFailed(fetched)) return null
+  return parsePosts(fetched.text)
 }
 
 function userAgent() {
@@ -405,25 +609,27 @@ async function listingFor(appUrl) {
   const seen = {}
   let after = target.after
   for (let page = 0; page < MAX_PAGES && children.length < PAGE_TARGET; page++) {
-    const fetched = await httpGet(feedUrlFor(target, after), {
-      Accept: PARTIAL,
-      'User-Agent': userAgent()
-    })
-    const batch = parsePosts(fetched.text)
-    if (!batch || !batch.length) break
+    const batch = await postsFrom(target, after)
+    if (batch == null) return children.length ? { data: { children: children } } : null
+    if (!batch.length) break
     const before = children.length
-    for (let i = 0; i < batch.length && children.length < PAGE_TARGET; i++) {
+    for (let i = 0; i < batch.length; i++) {
+      if (target.kind !== 'search' && children.length >= PAGE_TARGET) break
       const name = batch[i] && batch[i].data && batch[i].data.name
       if (!name || seen[name]) continue
       seen[name] = true
       children.push(batch[i])
     }
     if (children.length === before) break
-    after = children[children.length - 1].data.name
+    if (target.kind === 'search') {
+      const last = batch[batch.length - 1] && batch[batch.length - 1].data && batch[batch.length - 1].data.name
+      if (last) after = last
+    } else {
+      after = children[children.length - 1].data.name
+    }
   }
-  if (!children.length) return null
-  await attachRedgifsPosters(children)
-  return { data: { children } }
+  if (children.length) await attachRedgifsPosters(children)
+  return { data: { children: children } }
 }
 
 function jsonResponse(status, body) {
@@ -446,24 +652,24 @@ if (argument.indexOf('http') !== 0 && !fromMatrix()) {
 } else {
   listingFor(appUrl)
     .then((body) => {
-      if (!body) {
-        console.log('reddit-matrix empty ' + appUrl)
-        jsonResponse(502, JSON.stringify({ data: { children: [] } }))
+      if (!body || !body.data || !Array.isArray(body.data.children)) {
+        console.log('reddit-matrix failed ' + appUrl)
+        jsonResponse(502, JSON.stringify({ error: true }))
         return
       }
+      const count = body.data.children.length
       const text = JSON.stringify(body)
       console.log(
         'reddit-matrix ' +
-          body.data.children.length +
+          count +
           ' bytes ' +
           text.length +
-          ' first ' +
-          body.data.children[0].data.name
+          (count ? ' first ' + body.data.children[0].data.name : ' empty')
       )
       jsonResponse(200, text)
     })
     .catch((err) => {
       console.log('reddit-matrix ' + err)
-      jsonResponse(502, JSON.stringify({ data: { children: [] } }))
+      jsonResponse(502, JSON.stringify({ error: true }))
     })
 }
