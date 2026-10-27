@@ -465,11 +465,24 @@ function fetchFailed(res) {
   return !res.text
 }
 
+const SEARCH_END = 'rm:end'
+
+function rememberSearchCursors(target, posts, next) {
+  const value = next || SEARCH_END
+  for (let i = 0; i < posts.length; i++) {
+    const name = posts[i] && posts[i].data ? posts[i].data.name : ''
+    if (!name) continue
+    $persistentStore.write(value, cursorStoreKey(target, name))
+  }
+}
+
 async function searchBatch(target, after) {
   let cursor = ''
   if (after) {
-    cursor = $persistentStore.read(cursorStoreKey(target, after)) || ''
-    if (!cursor) return []
+    const saved = $persistentStore.read(cursorStoreKey(target, after)) || ''
+    if (!saved) return null
+    if (saved === SEARCH_END) return []
+    cursor = saved
   }
   const fetched = await httpGet(searchPageUrl(target, cursor), {
     Accept: PARTIAL,
@@ -478,9 +491,7 @@ async function searchBatch(target, after) {
   if (fetchFailed(fetched)) return null
   const posts = parseSearchPosts(fetched.text)
   if (!posts) return null
-  const next = nextSearchCursor(fetched.text, cursor)
-  const last = posts.length && posts[posts.length - 1].data ? posts[posts.length - 1].data.name : ''
-  if (next && last) $persistentStore.write(next, cursorStoreKey(target, last))
+  rememberSearchCursors(target, posts, nextSearchCursor(fetched.text, cursor))
   return posts
 }
 
@@ -632,6 +643,46 @@ async function listingFor(appUrl) {
   return { data: { children: children } }
 }
 
+const NSFW_LIST_URL = 'https://theporndude.com/best-nsfw-reddit-sites'
+
+function isNsfwDirectory(appUrl) {
+  return /^https:\/\/theporndude\.com\/best-nsfw-reddit-sites\/?(\?|$)/i.test(appUrl || '')
+}
+
+function minorNamed(name) {
+  const n = String(name).toLowerCase()
+  if (n.indexOf('teen') !== -1 && n.indexOf('fifteen') === -1) return true
+  if (n.indexOf('schoolgirl') !== -1) return true
+  if (n.indexOf('jailbait') !== -1 || n.indexOf('underage') !== -1 || n.indexOf('preteen') !== -1)
+    return true
+  if (n.indexOf('barelylegal') !== -1 || n.indexOf('barely_legal') !== -1) return true
+  if (n.indexOf('lolita') !== -1 || /(^|[^a-z])loli([^a-z]|$)/.test(n)) return true
+  if (n.indexOf('shota') !== -1) return true
+  if (n.indexOf('pedo') !== -1 && n.indexOf('torpedo') === -1) return true
+  if (n.indexOf('fauxbait') !== -1) return true
+  if (n.indexOf('child') !== -1) return true
+  if (/(^|[^a-z])kids?([^a-z]|$)/.test(n)) return true
+  if (/(^|[^a-z0-9])(1[0-9])([^a-z0-9]|$)/.test(n)) return true
+  if (/[a-z](1[0-9])$/.test(n)) return true
+  if (/^(1[0-9])/.test(n)) return true
+  return false
+}
+
+function nsfwNamesFromHtml(html) {
+  const names = []
+  const seen = {}
+  const re = /data-external-link="https?:\/\/(?:www\.)?reddit\.com\/r\/([^"/?#]+)\/?"/gi
+  let match
+  while ((match = re.exec(html))) {
+    const name = match[1]
+    if (!name || seen[name] || minorNamed(name)) continue
+    if (!/^[A-Za-z0-9_]+$/.test(name)) continue
+    seen[name] = true
+    names.push(name)
+  }
+  return names
+}
+
 function jsonResponse(status, body) {
   $done({
     response: {
@@ -647,8 +698,31 @@ function jsonResponse(status, body) {
 
 const argument = typeof $argument === 'string' ? $argument : ''
 const appUrl = argument.indexOf('http') === 0 ? argument : $request && $request.url
-if (argument.indexOf('http') !== 0 && !fromMatrix()) {
+if (header('X-RM-Direct') === '1') {
   $done({})
+} else if (argument.indexOf('http') !== 0 && !fromMatrix()) {
+  $done({})
+} else if (isNsfwDirectory(appUrl)) {
+  httpGet(NSFW_LIST_URL, { 'X-RM-Direct': '1', Accept: 'text/html' })
+    .then((res) => {
+      if (fetchFailed(res)) {
+        console.log('reddit-matrix nsfw failed ' + (res && res.status))
+        jsonResponse(502, JSON.stringify({ error: true }))
+        return
+      }
+      const names = nsfwNamesFromHtml(res.text)
+      if (!names.length) {
+        console.log('reddit-matrix nsfw empty')
+        jsonResponse(502, JSON.stringify({ error: true }))
+        return
+      }
+      console.log('reddit-matrix nsfw ' + names.length + ' first ' + names[0])
+      jsonResponse(200, JSON.stringify({ names: names }))
+    })
+    .catch((err) => {
+      console.log('reddit-matrix nsfw ' + err)
+      jsonResponse(502, JSON.stringify({ error: true }))
+    })
 } else {
   listingFor(appUrl)
     .then((body) => {
