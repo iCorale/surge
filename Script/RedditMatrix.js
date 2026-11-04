@@ -679,6 +679,56 @@ function minorNamed(name) {
   return false
 }
 
+function isRelated(appUrl) {
+  return /\/r\/[^/]+\/related\.json(?:\?|$)/i.test(appUrl || '')
+}
+
+function relatedSubreddit(appUrl) {
+  const match = /\/r\/([^/]+)\/related\.json/i.exec(appUrl || '')
+  if (!match) return ''
+  try {
+    return decodeURIComponent(match[1])
+  } catch (err) {
+    return match[1]
+  }
+}
+
+function subredditLinkName(href) {
+  const url = String(href || '')
+    .replace(/&amp;/g, '&')
+    .trim()
+  const match =
+    /^(?:https?:\/\/(?:(?:www|old|np)\.)?reddit\.com)?\/r\/([A-Za-z0-9_]+)\/?(?:[?#].*)?$/i.exec(url)
+  return match ? match[1] : ''
+}
+
+function relatedNamesFromHtml(html, current) {
+  const names = []
+  const seen = {}
+  const currentKey = String(current || '').toLowerCase()
+  function add(name) {
+    if (!name || !/^[A-Za-z0-9_]+$/.test(name)) return
+    const key = name.toLowerCase()
+    if (key === currentKey || seen[key] || minorNamed(name)) return
+    seen[key] = true
+    names.push(name)
+  }
+  const widget = /source="subreddit_list_widget"[\s\S]{0,800}?name="([A-Za-z0-9_]+)"/gi
+  let match
+  while ((match = widget.exec(html))) add(match[1])
+  const menu =
+    /<faceplate-tracker\b[^>]*\bsource="community_menu"[^>]*>[\s\S]*?<\/faceplate-tracker>/gi
+  while ((match = menu.exec(html))) {
+    const href = /href="([^"]+)"/i.exec(match[0])
+    if (href) add(subredditLinkName(href[1]))
+  }
+  return names
+}
+
+function railBlocked(html) {
+  return !html || /Prove your humanity|g-recaptcha|blocked by network security/i.test(html)
+}
+
 function nsfwNamesFromHtml(html) {
   const names = []
   const seen = {}
@@ -713,6 +763,33 @@ if (header('X-RM-Direct') === '1') {
   $done({})
 } else if (argument.indexOf('http') !== 0 && !fromMatrix()) {
   $done({})
+} else if (isRelated(appUrl)) {
+  const relatedName = relatedSubreddit(appUrl)
+  const railUrl =
+    'https://www.reddit.com/svc/shreddit/feeds/subreddit-right-rail?name=' +
+    encodeURIComponent(relatedName) +
+    '&refresh=1'
+  httpGet(railUrl, {
+    'X-RM-Direct': '1',
+    Accept: PARTIAL,
+    'User-Agent': userAgent()
+  })
+    .then((res) => {
+      if (!relatedName || fetchFailed(res) || railBlocked(res.text)) {
+        console.log('reddit-matrix related failed ' + relatedName + ' ' + (res && res.status))
+        jsonResponse(502, JSON.stringify({ error: true }))
+        return
+      }
+      const names = relatedNamesFromHtml(res.text, relatedName)
+      console.log(
+        'reddit-matrix related ' + relatedName + ' ' + names.length + (names.length ? ' first ' + names[0] : '')
+      )
+      jsonResponse(200, JSON.stringify({ names: names }))
+    })
+    .catch((err) => {
+      console.log('reddit-matrix related ' + err)
+      jsonResponse(502, JSON.stringify({ error: true }))
+    })
 } else if (isNsfwDirectory(appUrl)) {
   httpGet(NSFW_LIST_URL, { 'X-RM-Direct': '1', Accept: 'text/html' })
     .then((res) => {
