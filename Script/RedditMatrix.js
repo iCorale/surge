@@ -535,10 +535,20 @@ function stillFromGif(gif) {
 async function redgifsToken(force) {
   if (!force && rgToken && Date.now() - rgTokenAt < 10 * 60 * 1000) return rgToken
   const res = await httpGet('https://api.redgifs.com/v2/auth/temporary', {
-    Accept: 'application/json'
+    Accept: 'application/json',
+    'User-Agent': userAgent()
   })
-  const json = res.text ? JSON.parse(res.text) : null
-  if (!json || !json.token) throw new Error('redgifs auth ' + (res.status || res.error))
+  let json = null
+  if (res.text) {
+    try {
+      json = JSON.parse(res.text)
+    } catch (err) {
+      throw new Error('redgifs auth ' + (res.status || res.error) + ' ' + String(res.text).slice(0, 500))
+    }
+  }
+  if (!json || !json.token) {
+    throw new Error('redgifs auth ' + (res.status || res.error) + ' ' + String(res.text || '').slice(0, 500))
+  }
   rgToken = json.token
   rgTokenAt = Date.now()
   return rgToken
@@ -548,6 +558,7 @@ async function posterForSlug(slug, token) {
   const res = await httpGet('https://api.redgifs.com/v2/gifs/' + encodeURIComponent(slug), {
     Accept: 'application/json',
     Authorization: 'Bearer ' + token,
+    'User-Agent': userAgent(),
     'x-customheader': 'https://www.redgifs.com/watch/' + slug
   })
   if (res.status === 401) return { unauthorized: true, poster: '' }
