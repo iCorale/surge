@@ -3,6 +3,7 @@
 
 [Script]
 reddit-matrix = type=http-request,pattern=^https://www\.reddit\.com/r/[^/]+/(best|hot|new|top|rising|search|related)\.json,requires-body=0,timeout=60,script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/RedditMatrix.js,script-update-interval=0
+reddit-matrix-poster = type=http-request,pattern=^https://www\.reddit\.com/svc/rm/redgifs-poster\.json,requires-body=0,timeout=30,script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/RedditMatrix.js,script-update-interval=0
 reddit-matrix-nsfw = type=http-request,pattern=^https://theporndude\.com/best-nsfw-reddit-sites,requires-body=0,timeout=30,script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/RedditMatrix.js,script-update-interval=0
 
 [MITM]

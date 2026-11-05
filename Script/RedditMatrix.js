@@ -42,17 +42,33 @@ function redgifsSlug(html) {
   return ''
 }
 
+function usableCover(url) {
+  if (/[?&]blur=/i.test(url)) return false
+  if (/snoovatar|profileicon|award_images|\/styles\/|\/emoji\//i.test(url)) return false
+  return true
+}
+
+function firstClearUrl(text, source) {
+  const re = new RegExp(source, 'gi')
+  let match
+  while ((match = re.exec(text))) {
+    if (usableCover(match[0])) return match[0]
+  }
+  return ''
+}
+
 function coverUrl(html) {
   const text = decodeEntities(html)
   const patterns = [
-    /https:\/\/(?:external-preview|preview)\.redd\.it\/[^\s"'<>]+/i,
-    /https:\/\/media\.redgifs\.com\/[^\s"'<>]+-poster\.[a-z0-9]+/i,
-    /https:\/\/thumbs\d*\.redgifs\.com\/[^\s"'<>]+/i,
-    /https:\/\/i\.redd\.it\/[a-z0-9]+\.(?:jpe?g|png|gif|webp)/i
+    'https:\\/\\/media\\.redgifs\\.com\\/[^\\s"\'<>]+-poster\\.[a-z0-9]+',
+    'https:\\/\\/thumbs\\d*\\.redgifs\\.com\\/[^\\s"\'<>]+',
+    'https:\\/\\/i\\.redd\\.it\\/[a-z0-9]+\\.(?:jpe?g|png|gif|webp)',
+    'https:\\/\\/preview\\.redd\\.it\\/[^\\s"\'<>]+',
+    'https:\\/\\/external-preview\\.redd\\.it\\/[^\\s"\'<>]+'
   ]
-  for (const pattern of patterns) {
-    const match = text.match(pattern)
-    if (match) return match[0]
+  for (let i = 0; i < patterns.length; i++) {
+    const found = firstClearUrl(text, patterns[i])
+    if (found) return found
   }
   return ''
 }
@@ -513,12 +529,8 @@ function userAgent() {
 
 let rgToken = ''
 let rgTokenAt = 0
-
-function watchSlug(child) {
-  const url = child && child.data && child.data.url ? child.data.url : ''
-  const match = /redgifs\.com\/watch\/([a-z0-9-]+)/i.exec(url)
-  return match ? match[1] : ''
-}
+const RG_TOKEN_KEY = 'rm.rg.token'
+const RG_TOKEN_AT_KEY = 'rm.rg.at'
 
 function stillFromGif(gif) {
   const urls = (gif && gif.urls) || {}
@@ -532,8 +544,37 @@ function stillFromGif(gif) {
   return ''
 }
 
+function videoFromGif(gif) {
+  const urls = (gif && gif.urls) || {}
+  const hd = urls.hd
+  const sd = urls.sd
+  if (typeof hd === 'string' && hd.indexOf('https://') === 0 && /\.mp4(\?|$)/i.test(hd)) return hd
+  if (typeof sd === 'string' && sd.indexOf('https://') === 0 && /\.mp4(\?|$)/i.test(sd)) return sd
+  return ''
+}
+
+function rememberToken(token) {
+  rgToken = token
+  rgTokenAt = Date.now()
+  try {
+    $persistentStore.write(token, RG_TOKEN_KEY)
+    $persistentStore.write(String(rgTokenAt), RG_TOKEN_AT_KEY)
+  } catch (err) {
+    console.log(String(err))
+  }
+}
+
 async function redgifsToken(force) {
   if (!force && rgToken && Date.now() - rgTokenAt < 10 * 60 * 1000) return rgToken
+  if (!force) {
+    const saved = $persistentStore.read(RG_TOKEN_KEY) || ''
+    const at = Number($persistentStore.read(RG_TOKEN_AT_KEY) || '0')
+    if (saved && at > 0 && Date.now() - at < 10 * 60 * 1000) {
+      rgToken = saved
+      rgTokenAt = at
+      return rgToken
+    }
+  }
   const res = await httpGet('https://api.redgifs.com/v2/auth/temporary', {
     Accept: 'application/json',
     'User-Agent': userAgent()
@@ -549,9 +590,25 @@ async function redgifsToken(force) {
   if (!json || !json.token) {
     throw new Error('redgifs auth ' + (res.status || res.error) + ' ' + String(res.text || '').slice(0, 500))
   }
-  rgToken = json.token
-  rgTokenAt = Date.now()
+  rememberToken(json.token)
   return rgToken
+}
+
+function requestDropped(res) {
+  if (!res || res.error) return true
+  return typeof res.status !== 'number' || res.status === 0
+}
+
+function posterSlug(appUrl) {
+  const match = /[?&]slug=([^&]+)/.exec(appUrl || '')
+  if (!match) return ''
+  let slug = match[1]
+  try {
+    slug = decodeURIComponent(slug)
+  } catch (err) {
+    return ''
+  }
+  return /^[a-z0-9-]+$/i.test(slug) ? slug : ''
 }
 
 async function posterForSlug(slug, token) {
@@ -561,66 +618,41 @@ async function posterForSlug(slug, token) {
     'User-Agent': userAgent(),
     'x-customheader': 'https://www.redgifs.com/watch/' + slug
   })
+  if (requestDropped(res)) return { dropped: true, poster: '' }
   if (res.status === 401) return { unauthorized: true, poster: '' }
-  if (res.status < 200 || res.status >= 300) return { unauthorized: false, poster: '' }
+  if (res.status < 200 || res.status >= 300) return { poster: '' }
   let json = null
   try {
     json = JSON.parse(res.text)
   } catch (err) {
-    return { unauthorized: false, poster: '' }
+    return { poster: '' }
   }
-  return { unauthorized: false, poster: stillFromGif(json && json.gif) }
+  const gif = json && json.gif
+  return { poster: stillFromGif(gif), video: videoFromGif(gif) }
 }
 
-async function attachRedgifsPosters(children) {
-  const need = []
-  for (let i = 0; i < children.length; i++) {
-    if (watchSlug(children[i])) need.push(children[i])
-  }
-  if (!need.length) return
-
+async function oneRedgifsPoster(appUrl) {
+  const slug = posterSlug(appUrl)
+  if (!slug) return null
   let token
   try {
     token = await redgifsToken(false)
   } catch (err) {
     console.log(String(err))
-    return
+    return null
   }
-
-  const missed = []
-  await Promise.all(
-    need.map(async (child) => {
-      try {
-        const result = await posterForSlug(watchSlug(child), token)
-        if (result.unauthorized) missed.push(child)
-        else if (result.poster) {
-          child.data.preview = { images: [{ source: { url: result.poster } }] }
-        }
-      } catch (err) {
-        console.log(String(err))
-      }
-    })
-  )
-  if (!missed.length) return
-
-  try {
-    token = await redgifsToken(true)
-  } catch (err) {
-    console.log(String(err))
-    return
+  let result = await posterForSlug(slug, token)
+  if (result.unauthorized) {
+    try {
+      token = await redgifsToken(true)
+    } catch (err) {
+      console.log(String(err))
+      return null
+    }
+    result = await posterForSlug(slug, token)
   }
-  await Promise.all(
-    missed.map(async (child) => {
-      try {
-        const result = await posterForSlug(watchSlug(child), token)
-        if (result.poster) {
-          child.data.preview = { images: [{ source: { url: result.poster } }] }
-        }
-      } catch (err) {
-        console.log(String(err))
-      }
-    })
-  )
+  if (result.dropped || result.unauthorized) return null
+  return { url: result.poster || '', video: result.video || '' }
 }
 
 async function listingFor(appUrl) {
@@ -643,6 +675,7 @@ async function listingFor(appUrl) {
       children.push(batch[i])
     }
     if (children.length === before) break
+    if (children.length >= PAGE_TARGET) break
     if (target.kind === 'search') {
       const last = batch[batch.length - 1] && batch[batch.length - 1].data && batch[batch.length - 1].data.name
       if (last) after = last
@@ -650,7 +683,7 @@ async function listingFor(appUrl) {
       after = children[children.length - 1].data.name
     }
   }
-  if (children.length) await attachRedgifsPosters(children)
+  if (!children.length) return { data: { children: [] } }
   return { data: { children: children } }
 }
 
@@ -677,6 +710,10 @@ function minorNamed(name) {
   if (/[a-z](1[0-9])$/.test(n)) return true
   if (/^(1[0-9])/.test(n)) return true
   return false
+}
+
+function isPoster(appUrl) {
+  return /^https:\/\/www\.reddit\.com\/svc\/rm\/redgifs-poster\.json(?:\?|$)/i.test(appUrl || '')
 }
 
 function isRelated(appUrl) {
@@ -763,6 +800,27 @@ if (header('X-RM-Direct') === '1') {
   $done({})
 } else if (argument.indexOf('http') !== 0 && !fromMatrix()) {
   $done({})
+} else if (isPoster(appUrl)) {
+  oneRedgifsPoster(appUrl)
+    .then((body) => {
+      const slug = posterSlug(appUrl)
+      if (!body) {
+        console.log('reddit-matrix poster failed ' + slug)
+        jsonResponse(502, JSON.stringify({ error: true }))
+        return
+      }
+      console.log(
+        'reddit-matrix poster ' +
+          (body.url ? 'ok ' : 'empty ') +
+          (body.video ? 'hd ' : 'no-video ') +
+          slug
+      )
+      jsonResponse(200, JSON.stringify(body))
+    })
+    .catch((err) => {
+      console.log('reddit-matrix poster ' + err)
+      jsonResponse(502, JSON.stringify({ error: true }))
+    })
 } else if (isRelated(appUrl)) {
   const relatedName = relatedSubreddit(appUrl)
   const railUrl =
