@@ -332,8 +332,6 @@ function parseSearchPosts(html) {
 const PARTIAL = 'text/vnd.reddit.partial+html, text/html'
 const PAGE_TARGET = 50
 const MAX_PAGES = 4
-const ALLOWED = ['https://icorale.github.io', 'http://localhost', 'http://127.0.0.1']
-
 function encodeBase64(value) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
   let out = ''
@@ -360,12 +358,23 @@ function header(name) {
   return ''
 }
 
+// Dev servers on this machine or the LAN, e.g. a phone opening http://192.168.1.5:5173.
+function devHost(host) {
+  if (host === 'localhost' || host === '127.0.0.1' || /\.local$/.test(host)) return true
+  const ip = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host)
+  if (!ip) return false
+  const a = Number(ip[1])
+  const b = Number(ip[2])
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
 function fromMatrix() {
   const source = header('Origin') || header('Referer')
-  for (let i = 0; i < ALLOWED.length; i++) {
-    if (source.indexOf(ALLOWED[i]) === 0) return true
-  }
-  return false
+  const match = /^(https?):\/\/([^/:?#]+)(?::\d+)?(?:[/?#]|$)/i.exec(source)
+  if (!match) return false
+  const host = match[2].toLowerCase()
+  if (host === 'icorale.github.io') return match[1].toLowerCase() === 'https'
+  return devHost(host)
 }
 
 function queryParam(query, name) {

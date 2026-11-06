@@ -1,5 +1,5 @@
 #!name=Reddit Matrix
-#!desc=让 Reddit Matrix 读取公开版块、版块内搜索，以及首页的 NSFW 版块名单。只替换来自 icorale.github.io 和本机开发地址的请求。
+#!desc=让 Reddit Matrix 读取公开版块、版块内搜索，以及首页的 NSFW 版块名单。只替换来自 icorale.github.io、本机和局域网开发地址的请求。
 
 [Script]
 reddit-matrix = type=http-request,pattern=^https://www\.reddit\.com/r/[^/]+/(best|hot|new|top|rising|search|related)\.json,requires-body=0,timeout=60,script-path=https://raw.githubusercontent.com/iCorale/surge/main/Script/RedditMatrix.js,script-update-interval=0
