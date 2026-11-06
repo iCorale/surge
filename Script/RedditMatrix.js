@@ -191,9 +191,9 @@ function searchMeta(slice) {
 }
 
 function parsePosts(html) {
-  if (!html || html.includes('Prove your humanity') || !html.includes('<shreddit-post')) {
-    return null
-  }
+  if (!html || /Prove your humanity|g-recaptcha|blocked by network security/i.test(html)) return null
+  // Past the last post Reddit still answers 200 with a bare partial (loaders, no posts): the list has ended.
+  if (!html.includes('<shreddit-post')) return /<faceplate-|<ac-track|<ac-publish/i.test(html) ? [] : null
 
   const children = []
   const seen = new Set()
