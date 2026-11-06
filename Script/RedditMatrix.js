@@ -141,6 +141,55 @@ function mimeFor(ext) {
   return 'image/jpeg'
 }
 
+function epochSeconds(stamp) {
+  const iso = String(stamp || '')
+    .replace(/\.(\d{3})\d*/, '.$1')
+    .replace(/([+-]\d\d)(\d\d)$/, '$1:$2')
+  const ms = Date.parse(iso)
+  return ms > 0 ? ms / 1000 : 0
+}
+
+function countOf(value) {
+  if (value === '' || value == null) return null
+  const n = Number(value)
+  return isFinite(n) ? n : null
+}
+
+function withMeta(data, meta) {
+  if (meta.author) data.author = meta.author
+  if (meta.score != null) data.score = meta.score
+  if (meta.comments != null) data.num_comments = meta.comments
+  if (meta.created) data.created_utc = meta.created
+  if (meta.permalink) data.permalink = meta.permalink
+  return data
+}
+
+function feedMeta(tag) {
+  return {
+    author: attr(tag, 'author'),
+    score: countOf(attr(tag, 'score')),
+    comments: countOf(attr(tag, 'comment-count')),
+    created: epochSeconds(attr(tag, 'created-timestamp')),
+    permalink: attr(tag, 'permalink')
+  }
+}
+
+function searchMeta(slice) {
+  const author = slice.match(/"profile"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/)
+  const counts = slice.match(
+    /search-counter-row[\s\S]*?<faceplate-number[^>]*\bnumber="(\d+)"[\s\S]*?<faceplate-number[^>]*\bnumber="(\d+)"/
+  )
+  const stamp = slice.match(/<faceplate-timeago[^>]*\bts="([^"]+)"/)
+  const link = slice.match(/href="(\/r\/[^"/]+\/comments\/[^"]+)"/)
+  return {
+    author: author ? author[1] : '',
+    score: counts ? countOf(counts[1]) : null,
+    comments: counts ? countOf(counts[2]) : null,
+    created: stamp ? epochSeconds(stamp[1]) : 0,
+    permalink: link ? link[1] : ''
+  }
+}
+
 function parsePosts(html) {
   if (!html || html.includes('Prove your humanity') || !html.includes('<shreddit-post')) {
     return null
@@ -167,6 +216,7 @@ function parsePosts(html) {
     const images = type === 'gallery' ? galleryImages(tag + body) : imageFiles(tag + body)
     const nsfw = /\bnsfw\b/i.test(tag)
     const slug = redgifsSlug(tag + body)
+    const meta = feedMeta(tag)
 
     if (type === 'gallery' && images.length) {
       seen.add(name)
@@ -181,7 +231,7 @@ function parsePosts(html) {
         }
       }
       children.push({
-        data: {
+        data: withMeta({
           name,
           title,
           url: images[0].url,
@@ -190,20 +240,20 @@ function parsePosts(html) {
           is_gallery: true,
           gallery_data: { items: images.map((image) => ({ media_id: image.id })) },
           media_metadata
-        }
+        }, meta)
       })
       continue
     }
 
     if (slug) {
       seen.add(name)
-      const data = {
+      const data = withMeta({
         name,
         title,
         url: 'https://www.redgifs.com/watch/' + slug,
         is_self: false,
         over_18: nsfw
-      }
+      }, meta)
       const poster = coverUrl(tag + body)
       if (poster) data.preview = { images: [{ source: { url: poster } }] }
       children.push({ data })
@@ -214,13 +264,13 @@ function parsePosts(html) {
     if (!direct) continue
     seen.add(name)
     children.push({
-      data: {
+      data: withMeta({
         name,
         title,
         url: direct,
         is_self: false,
         over_18: nsfw
-      }
+      }, meta)
     })
   }
 
@@ -271,16 +321,17 @@ function parseSearchPosts(html) {
     const nsfw = /"nsfw"\s*:\s*true/.test(slice.slice(0, 2500))
     const slug = redgifsSlug(slice)
     const images = collectImages(slice)
+    const meta = searchMeta(slice)
     if (slug) {
       seen.add(name)
       const poster = coverUrl(slice) || (images[0] ? images[0].url : '')
-      const data = {
+      const data = withMeta({
         name: name,
         title: title,
         url: 'https://www.redgifs.com/watch/' + slug,
         is_self: false,
         over_18: nsfw
-      }
+      }, meta)
       if (poster) data.preview = { images: [{ source: { url: poster } }] }
       children.push({ data: data })
       continue
@@ -303,7 +354,7 @@ function parseSearchPosts(html) {
       const items = []
       for (let i = 0; i < images.length; i++) items.push({ media_id: images[i].id })
       children.push({
-        data: {
+        data: withMeta({
           name: name,
           title: title,
           url: direct,
@@ -312,18 +363,18 @@ function parseSearchPosts(html) {
           is_gallery: true,
           gallery_data: { items: items },
           media_metadata: media_metadata
-        }
+        }, meta)
       })
       continue
     }
     children.push({
-      data: {
+      data: withMeta({
         name: name,
         title: title,
         url: direct,
         is_self: false,
         over_18: nsfw
-      }
+      }, meta)
     })
   }
   return children
@@ -399,7 +450,8 @@ function feedUrlFromAppUrl(appUrl) {
     kind: kind,
     after: queryParam(match[2], 'after'),
     query: queryParam(match[2], 'q'),
-    sort: queryParam(match[2], 'sort')
+    sort: queryParam(match[2], 'sort'),
+    range: queryParam(match[2], 't')
   }
   if (kind === 'search' && !target.query) return null
   return target
@@ -459,6 +511,20 @@ function cursorStoreKey(target, after) {
   return 'rms.' + hash32(raw, 5381).toString(16) + hash32(raw, 2166136261).toString(16)
 }
 
+function topRange(range) {
+  if (
+    range === 'hour' ||
+    range === 'day' ||
+    range === 'week' ||
+    range === 'month' ||
+    range === 'year' ||
+    range === 'all'
+  ) {
+    return range
+  }
+  return 'day'
+}
+
 function feedUrlFor(target, after) {
   let url =
     'https://www.reddit.com/svc/shreddit/community-more-posts/' +
@@ -467,7 +533,7 @@ function feedUrlFor(target, after) {
     encodeURIComponent(target.subreddit) +
     '&feedLength=' +
     PAGE_TARGET
-  if (target.kind === 'top') url += '&t=day'
+  if (target.kind === 'top') url += '&t=' + topRange(target.range)
   if (after) url += '&after=' + encodeURIComponent(encodeBase64(after))
   return url
 }
