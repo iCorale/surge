@@ -14,6 +14,20 @@ function attr(tag, name) {
   return match ? decodeEntities(match[1]) : ''
 }
 
+function boxOfId(fragment, id) {
+  if (!id) return null
+  const safe = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // A gallery's first <img> for an id is often the carousel slide without a size.
+  const re = new RegExp('<img\\b[^>]*' + safe + '[^>]*>', 'gi')
+  let match
+  while ((match = re.exec(fragment))) {
+    const x = Number(attr(match[0], 'width'))
+    const y = Number(attr(match[0], 'height'))
+    if (x > 0 && y > 0) return { x: x, y: y }
+  }
+  return null
+}
+
 function splitTag(fragment) {
   let quote = ''
   for (let i = 0; i < fragment.length; i++) {
@@ -222,11 +236,12 @@ function parsePosts(html) {
       seen.add(name)
       const media_metadata = {}
       for (const image of images) {
+        const box = boxOfId(tag + body, image.id)
         media_metadata[image.id] = {
           status: 'valid',
           e: 'Image',
           m: mimeFor(image.ext),
-          s: { u: image.url },
+          s: box ? { u: image.url, x: box.x, y: box.y } : { u: image.url },
           p: [{ x: 1080, u: image.url }]
         }
       }
@@ -256,6 +271,11 @@ function parsePosts(html) {
       }, meta)
       const poster = coverUrl(tag + body)
       if (poster) data.preview = { images: [{ source: { url: poster } }] }
+      const box = boxOfId(tag + body, slug)
+      if (box) {
+        data.width = box.x
+        data.height = box.y
+      }
       children.push({ data })
       continue
     }
@@ -263,15 +283,19 @@ function parsePosts(html) {
     const direct = images[0] ? images[0].url : /^https?:\/\/i\.redd\.it\//i.test(href) ? href : ''
     if (!direct) continue
     seen.add(name)
-    children.push({
-      data: withMeta({
-        name,
-        title,
-        url: direct,
-        is_self: false,
-        over_18: nsfw
-      }, meta)
-    })
+    const single = withMeta({
+      name,
+      title,
+      url: direct,
+      is_self: false,
+      over_18: nsfw
+    }, meta)
+    const box = boxOfId(tag + body, images[0] ? images[0].id : '')
+    if (box) {
+      single.width = box.x
+      single.height = box.y
+    }
+    children.push({ data: single })
   }
 
   return children
